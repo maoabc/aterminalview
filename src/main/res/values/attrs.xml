@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    
+    <attr name="colorControlActivated" format="color" />
+    <attr name="colorControlNormal" format="color" />
+    
+    <declare-styleable name="TerminalView">
+        <attr name="screenMarginTop" format="dimension" />
+        <attr name="screenMarginBottom" format="dimension" />
+        <attr name="screenMarginLeft" format="dimension" />
+        <attr name="screenMarginRight" format="dimension" />
+    </declare-styleable>
+</resources>

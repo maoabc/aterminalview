@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">terminalview</string>
+    <string name="copy">Copy</string>
+    <string name="paste">Paste</string>
+    <string name="copied">Copied</string>
+    <string name="toast_overflow_of_limit">Too long</string>
+</resources>
