@@ -98,7 +98,9 @@ public class TerminalView extends View {
     ActionMode mTextActionMode;
     private ActionMode.Callback mCustomSelectionActionModeCallback;
 
-    private boolean mCtrlOn;
+
+    private int mModifiers;
+    private ModifiersChangedListener mModifiersChangedListener;
 
     private FastScroller mFastScroller;
 
@@ -558,38 +560,44 @@ public class TerminalView extends View {
                     i++;
                 }
             }
-            mTerm.dispatchCharacter(getTerminalKeyModifiers(), codePoint);
+            mTerm.dispatchCharacter(getKeyModifiers(), codePoint);
         }
-        clearTerminalKeyModifiers();
+        setModifiers(0);
         mTerm.flushToPty();
 
         resetStatus();
         return true;
     }
 
-    private int getTerminalKeyModifiers() {
-        return mCtrlOn ? TerminalKeys.VTERM_MOD_CTRL : 0;
+    private int getKeyModifiers() {
+        return mModifiers;
     }
 
-    private void clearTerminalKeyModifiers() {
-        if (mCtrlOn) {
-            mCtrlOn = false;
+
+    public int getModifiers() {
+        return mModifiers;
+    }
+
+    public void setModifiers(int modifiers) {
+        if (this.mModifiers != modifiers) {
+            this.mModifiers = modifiers;
+            if (mModifiersChangedListener != null) mModifiersChangedListener.onChanged(mModifiers);
         }
     }
 
-    public void setCtrlOn(boolean ctrlOn) {
-        this.mCtrlOn = ctrlOn;
+    public ModifiersChangedListener getModifiersChangedListener() {
+        return mModifiersChangedListener;
     }
 
-    public boolean isCtrlOn() {
-        return mCtrlOn;
+    public void setModifiersChangedListener(ModifiersChangedListener modifiersChangedListener) {
+        this.mModifiersChangedListener = modifiersChangedListener;
     }
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (DEBUG) Log.d(TAG, "onKeyDown: " + keyCode);
         resetStatus();
-        return mTermKeys.onKey(this, keyCode, event, getTerminalKeyModifiers());
+        return mTermKeys.onKey(this, keyCode, event, getKeyModifiers());
     }
 
     private void resetStatus() {
@@ -600,8 +608,8 @@ public class TerminalView extends View {
 
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
-        boolean result = mTermKeys.onKey(this, keyCode, event, getTerminalKeyModifiers());
-        clearTerminalKeyModifiers();
+        boolean result = mTermKeys.onKey(this, keyCode, event, getKeyModifiers());
+        setModifiers(0);
         if (mTerm != null) mTerm.flushToPty();
         return result;
     }
@@ -1240,19 +1248,19 @@ public class TerminalView extends View {
      * Paste, Replace and Share actions, depending on what this View supports.
      *
      * <p>A custom implementation can add new entries in the default menu in its
-     * {@link android.view.ActionMode.Callback#onPrepareActionMode(ActionMode, android.view.Menu)}
+     * {@link ActionMode.Callback#onPrepareActionMode(ActionMode, Menu)}
      * method. The default actions can also be removed from the menu using
-     * {@link android.view.Menu#removeItem(int)} and passing {@link android.R.id#selectAll},
+     * {@link Menu#removeItem(int)} and passing {@link android.R.id#selectAll},
      * {@link android.R.id#cut}, {@link android.R.id#copy}, {@link android.R.id#paste},
      * {@link android.R.id#replaceText} or {@link android.R.id#shareText} ids as parameters.
      *
      * <p>Returning false from
-     * {@link android.view.ActionMode.Callback#onCreateActionMode(ActionMode, android.view.Menu)}
+     * {@link ActionMode.Callback#onCreateActionMode(ActionMode, Menu)}
      * will prevent the action mode from being started.
      *
      * <p>Action click events should be handled by the custom implementation of
-     * {@link android.view.ActionMode.Callback#onActionItemClicked(ActionMode,
-     * android.view.MenuItem)}.
+     * {@link ActionMode.Callback#onActionItemClicked(ActionMode,
+     * MenuItem)}.
      *
      * <p>Note that text selection mode is not started when a TextView receives focus and the
      * {@link android.R.attr#selectAllOnFocus} flag has been set. The content is highlighted in
@@ -1388,5 +1396,9 @@ public class TerminalView extends View {
         public void reset() {
             startRow = endRow = startCol = endCol = -1;
         }
+    }
+
+    public interface ModifiersChangedListener {
+        void onChanged(int modifiers);
     }
 }
