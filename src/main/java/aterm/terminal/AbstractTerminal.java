@@ -268,7 +268,7 @@ public abstract class AbstractTerminal implements OutputCallback {
         }
     }
 
-
+    @Size(2)
     public final int[] getDefaultColors() {
         synchronized (this) {
             int[] colors = new int[2];

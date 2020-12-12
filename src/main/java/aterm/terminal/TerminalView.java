@@ -36,6 +36,8 @@ import android.view.ViewTreeObserver;
 import android.view.WindowManager;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.ExtractedText;
+import android.view.inputmethod.ExtractedTextRequest;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.PopupWindow;
@@ -54,7 +56,7 @@ import static aterm.terminal.AbstractTerminal.TAG;
  * Rendered contents of a {@link AbstractTerminal} session.
  */
 public class TerminalView extends View {
-    private static final boolean DEBUG_IME = false;
+    private static final boolean DEBUG_IME = true;
     private static final boolean DEBUG = BuildConfig.DEBUG;
 
 
@@ -105,6 +107,18 @@ public class TerminalView extends View {
     private FastScroller mFastScroller;
 
 
+    static class InputMethodState {
+        ExtractedTextRequest mExtracting;
+        final ExtractedText mTmpExtracted = new ExtractedText();
+        int mBatchEditNesting;
+        boolean mCursorChanged;
+        boolean mSelectionModeChanged;
+        boolean mContentChanged;
+        int mChangedStart, mChangedEnd, mChangedDelta;
+    }
+
+    private final InputMethodState mInputMethodState = new InputMethodState();
+
     private static final int MSG_DAMAGE = 1;
     private static final int MSG_MOVERECT = 2;
     private static final int MSG_MOVECURSOR = 3;
@@ -115,9 +129,18 @@ public class TerminalView extends View {
         public void handleMessage(Message msg) {
             switch (msg.what) {
                 case MSG_DAMAGE:
-                case MSG_MOVERECT:
+                case MSG_MOVERECT: {
+                    invalidate();
+                    if (mUpdateCallback != null) mUpdateCallback.onUpdate();
+                    break;
+                }
                 case MSG_MOVECURSOR: {
                     invalidate();
+
+//                    InputMethodManager imm = InputMethodManagerCompat.peekInstance(TerminalView.this);
+//                    if (imm != null) {
+//                        imm.updateSelection(TerminalView.this, 0, 0, -1, -1);
+//                    }
                     if (mUpdateCallback != null) mUpdateCallback.onUpdate();
                     break;
                 }
@@ -223,6 +246,8 @@ public class TerminalView extends View {
             }
 
         });
+
+        InputMethodManagerCompat.initInstance(this);
     }
 
     @Override
@@ -497,7 +522,16 @@ public class TerminalView extends View {
 
 //            @Override
 //            public Editable getEditable() {
-//                return editable;//返回自定义编辑对象，后续绘制输入法联想状态等
+//                if (mTerm == null) {
+//                    return super.getEditable();
+//                }
+//
+//                int cursorRow = mTerm.getCursorRow();
+//                String text = mTerm.getText(cursorRow, cursorRow, 0, mMaxScreenCols);
+//
+//                if (DEBUG_IME) Log.d(TAG, "currentLine: " + text);
+//
+//                return new SpannableStringBuilder(text);//返回自定义编辑对象，后续绘制输入法联想状态等
 //            }
 
             @Override
@@ -509,7 +543,30 @@ public class TerminalView extends View {
                 return true;
             }
 
-
+//            @Override
+//            public CharSequence getTextAfterCursor(int length, int flags) {
+//                if (DEBUG_IME) Log.d(TAG, "getTextAfterCursor: " + length);
+//                if (mTerm == null) {
+//                    return "";
+//                }
+//                int cursorRow = mTerm.getCursorRow();
+//                int cursorCol = mTerm.getCursorCol();
+//
+//                return mTerm.getText(cursorRow, cursorRow, cursorCol, mMaxScreenCols);
+//            }
+//
+//            @Override
+//            public CharSequence getTextBeforeCursor(int length, int flags) {
+//                if (DEBUG_IME) Log.d(TAG, "getTextBeforeCursor: " + length);
+//                if (mTerm == null) {
+//                    return "";
+//                }
+//                int cursorRow = mTerm.getCursorRow();
+//                int cursorCol = mTerm.getCursorCol();
+//
+//                return mTerm.getText(cursorRow, cursorRow, 0, cursorCol);
+//            }
+//
             @Override
             public boolean deleteSurroundingText(int leftLength, int rightLength) {
                 if (DEBUG_IME) {
@@ -1248,19 +1305,19 @@ public class TerminalView extends View {
      * Paste, Replace and Share actions, depending on what this View supports.
      *
      * <p>A custom implementation can add new entries in the default menu in its
-     * {@link ActionMode.Callback#onPrepareActionMode(ActionMode, Menu)}
+     * {@link android.view.ActionMode.Callback#onPrepareActionMode(ActionMode, android.view.Menu)}
      * method. The default actions can also be removed from the menu using
-     * {@link Menu#removeItem(int)} and passing {@link android.R.id#selectAll},
+     * {@link android.view.Menu#removeItem(int)} and passing {@link android.R.id#selectAll},
      * {@link android.R.id#cut}, {@link android.R.id#copy}, {@link android.R.id#paste},
      * {@link android.R.id#replaceText} or {@link android.R.id#shareText} ids as parameters.
      *
      * <p>Returning false from
-     * {@link ActionMode.Callback#onCreateActionMode(ActionMode, Menu)}
+     * {@link android.view.ActionMode.Callback#onCreateActionMode(ActionMode, android.view.Menu)}
      * will prevent the action mode from being started.
      *
      * <p>Action click events should be handled by the custom implementation of
-     * {@link ActionMode.Callback#onActionItemClicked(ActionMode,
-     * MenuItem)}.
+     * {@link android.view.ActionMode.Callback#onActionItemClicked(ActionMode,
+     * android.view.MenuItem)}.
      *
      * <p>Note that text selection mode is not started when a TextView receives focus and the
      * {@link android.R.attr#selectAllOnFocus} flag has been set. The content is highlighted in
@@ -1358,7 +1415,7 @@ public class TerminalView extends View {
     }
 
     private int getCursorY(float y) {
-        int charHeight = mMetrics.charHeight;
+        float charHeight = mMetrics.charHeight;
         return (int) Math.ceil((y - charHeight - mTopOfScreenMargin) / charHeight + mScrollY / charHeight);
     }
 
@@ -1373,7 +1430,8 @@ public class TerminalView extends View {
     }
 
     private int getPointY(int cy) {
-        return Math.round((cy - (mScrollY / mMetrics.charHeight)) * mMetrics.charHeight) + mTopOfScreenMargin;
+        float charHeight = mMetrics.charHeight;
+        return Math.round((cy - (mScrollY / charHeight)) * charHeight) + mTopOfScreenMargin;
     }
 
     static class TerminalRect {

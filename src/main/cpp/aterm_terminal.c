@@ -95,21 +95,18 @@ typedef struct {
 typedef struct {
     dimen_t cols;
 
-    CellAttr *cells;
+    CellAttr cells[0];
 } ScrollbackLine;
 
 static inline ScrollbackLine *new_scrollback_line(dimen_t cols) {
-    ScrollbackLine *line = (ScrollbackLine *) malloc(sizeof(ScrollbackLine));
+    ScrollbackLine *line = (ScrollbackLine *) malloc(sizeof(ScrollbackLine)
+                                                     + sizeof(CellAttr) * cols);
     line->cols = cols;
-    line->cells = (CellAttr *) malloc(sizeof(CellAttr) * cols);
     return line;
 }
 
 static inline void free_scrollback_line(ScrollbackLine *line) {
-    if (line) {
-        free(line->cells);
-        free(line);
-    }
+    free(line);
 }
 
 static inline dimen_t scroll_line_copy_from(ScrollbackLine *line, dimen_t cols,
@@ -128,7 +125,7 @@ static inline dimen_t scroll_line_copy_from(ScrollbackLine *line, dimen_t cols,
 }
 
 static inline dimen_t
-scroll_line_copy_to(ScrollbackLine *line, dimen_t cols, VTermScreenCell *cells) {
+scroll_line_copy_to(const ScrollbackLine *line, dimen_t cols, VTermScreenCell *cells) {
     dimen_t n = cols > line->cols ? line->cols : cols;
 
     for (int i = 0; i < n; ++i) {
@@ -144,7 +141,8 @@ scroll_line_copy_to(ScrollbackLine *line, dimen_t cols, VTermScreenCell *cells) 
     return n;
 }
 
-static inline void scroll_line_get_cell(ScrollbackLine *line, dimen_t col, VTermScreenCell *cell) {
+static inline void
+scroll_line_get_cell(const ScrollbackLine *line, dimen_t col, VTermScreenCell *cell) {
     cell->chars[0] = line->cells[col].code;
     cell->chars[1] = 0;
 
@@ -314,11 +312,10 @@ static VTermScreenCallbacks cb = {
 static void output_callback(const char *s, size_t len, void *user) {
     Terminal *term = (Terminal *) user;
     JNIEnv *env = getJNIEnv();
+
     jbyteArray bytes = term->buffer;
-    bool local = false;
     if (len > term->bufferSize) {
         bytes = (*env)->NewByteArray(env, len);
-        local = true;
     }
 
     (*env)->SetByteArrayRegion(env, bytes, 0, len, (const jbyte *) s);
@@ -327,10 +324,14 @@ static void output_callback(const char *s, size_t len, void *user) {
         (*env)->ExceptionClear(env);
     }
 
-    if (local) {
+    if (bytes != term->buffer) {
         (*env)->DeleteLocalRef(env, bytes);
     }
 }
+
+#define COLOR_R(_argb) ((uint8_t) ((_argb>>16)&0xff))
+#define COLOR_G(_argb) ((uint8_t) ((_argb>>8)&0xff))
+#define COLOR_B(_argb) ((uint8_t) ((_argb)&0xff))
 
 
 static Terminal *new_terminal(jobject callbacks, jobject outputCallback,
@@ -349,9 +350,7 @@ static Terminal *new_terminal(jobject callbacks, jobject outputCallback,
     term->scrollCur = 0;
     term->scrollSize = scrollRows;
 
-    term->scrollLines = (ScrollbackLine **) malloc(sizeof(ScrollbackLine *) * term->scrollSize);
-
-    memset(term->scrollLines, 0, sizeof(ScrollbackLine *) * term->scrollSize);
+    term->scrollLines = (ScrollbackLine **) calloc(term->scrollSize, sizeof(ScrollbackLine *));
 
     /* Create VTerm */
     VTerm *vt = vterm_new(term->rows, term->cols);
@@ -362,12 +361,8 @@ static Terminal *new_terminal(jobject callbacks, jobject outputCallback,
 
     VTermColor color_fg;
     VTermColor color_bg;
-    vterm_color_rgb(&color_fg, (uint8_t) ((fg >> 16) & 0xff),
-                    (uint8_t) ((fg >> 8) & 0xff),
-                    (uint8_t) (fg & 0xff));
-    vterm_color_rgb(&color_bg, (uint8_t) ((bg >> 16) & 0xff),
-                    (uint8_t) ((bg >> 8) & 0xff),
-                    (uint8_t) (bg & 0xff));
+    vterm_color_rgb(&color_fg, COLOR_R(fg), COLOR_G(fg), COLOR_B(fg));
+    vterm_color_rgb(&color_bg, COLOR_R(bg), COLOR_G(bg), COLOR_B(bg));
     vterm_state_set_default_colors(vterm_obtain_state(term->vt), &color_fg, &color_bg);
 
 
@@ -547,7 +542,7 @@ static void terminal_getCellLocked(Terminal *term, VTermPos pos, VTermScreenCell
             // Extend last scrollback cell into invalid region
             scroll_line_get_cell(line, (dimen_t) (line->cols - 1), cell);
             cell->width = 1;
-            cell->chars[0] = ' ';
+            cell->chars[0] = 0;
 #if DEBUG_SCROLLBACK
             cell->bg.rgb.green = 255;
 #endif
@@ -558,6 +553,7 @@ static void terminal_getCellLocked(Terminal *term, VTermPos pos, VTermScreenCell
     if ((size_t) pos.row >= term->rows) {
         // Invalid region below screen
         cell->width = 1;
+        cell->chars[0] = 0;
 #if DEBUG_SCROLLBACK
         cell->bg.rgb.red = 128;
 #endif
@@ -577,8 +573,9 @@ static jlong
 aterm_terminal_Terminal_nativeInit(JNIEnv *env, jclass clazz,
                                    jobject callbacks, jobject outputCallback,
                                    jint rows, jint cols, jint scrollRows, jint fg, jint bg) {
-    return ptr_to_jlong(new_terminal(callbacks, outputCallback,
-                                     (dimen_t) rows, (dimen_t) cols, (dimen_t) scrollRows, fg, bg));
+    Terminal *term = new_terminal(callbacks, outputCallback,
+                                  (dimen_t) rows, (dimen_t) cols, (dimen_t) scrollRows, fg, bg);
+    return ptr_to_jlong(term);
 }
 
 static jint aterm_terminal_Terminal_nativeDestroy(JNIEnv *env, jclass clazz, jlong ptr) {
@@ -595,7 +592,7 @@ static jint aterm_terminal_Terminal_nativeResize(JNIEnv *env, jclass clazz, jlon
 }
 
 static inline int toArgb(const VTermColor *color) {
-    return (0xff << 24 | color->rgb.red << 16 | color->rgb.green << 8 | color->rgb.blue);
+    return (0xff << 24) | (color->rgb.red << 16) | (color->rgb.green << 8) | (color->rgb.blue);
 }
 
 static inline bool isCellStyleEqual(const VTermScreenCell *a, const VTermScreenCell *b) {
@@ -795,7 +792,6 @@ static jint aterm_terminal_Terminal_nativeGetValidCol(JNIEnv *env, jclass clazz,
     };
     VTermScreenCell cell;
     while (pos.col < term->cols) {
-        memset(&cell, 0, sizeof(VTermScreenCell));
         terminal_getCellLocked(term, pos, &cell);
 
         const int cend = pos.col + cell.width;
@@ -823,13 +819,10 @@ static void aterm_terminal_Terminal_nativeSetDefaultColors(JNIEnv *env, jclass c
     (*env)->ReleaseIntArrayElements(env, colors, cls, JNI_ABORT);
 
     VTermColor color_fg;
+
+    vterm_color_rgb(&color_fg, COLOR_R(default_fg), COLOR_G(default_fg), COLOR_B(default_fg));
     VTermColor color_bg;
-    vterm_color_rgb(&color_fg, (uint8_t) ((default_fg >> 16) & 0xff),
-                    (uint8_t) ((default_fg >> 8) & 0xff),
-                    (uint8_t) (default_fg & 0xff));
-    vterm_color_rgb(&color_bg, (uint8_t) ((default_bg >> 16) & 0xff),
-                    (uint8_t) ((default_bg >> 8) & 0xff),
-                    (uint8_t) (default_bg & 0xff));
+    vterm_color_rgb(&color_bg, COLOR_R(default_bg), COLOR_G(default_bg), COLOR_B(default_bg));
 
     vterm_state_set_default_colors(vterm_obtain_state(term->vt), &color_fg,
                                    &color_bg);
